@@ -8,6 +8,9 @@ usage: %s [-i input_file] [-o output_file]
 -i: input file will be decrypted
 -o: output file will be decrypted
 ```
+## Contributing
+
+@yumingxue
 
 ## Note
 
