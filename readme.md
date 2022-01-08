@@ -22,3 +22,6 @@ usage: %s [-i input_file] [-o output_file]
 4. 1字节代码有些token也没有遇到过，所以如果解析到这些字节会失败
 5. 本项目优化了恢复后的*.m文件的文字排版，使之更加接近原生的*.m文件
 ```
+
+## Preview
+![image](https://github.com/ash255/ptom/blob/main/%E6%95%88%E6%9E%9C%E5%9B%BE.PNG)
