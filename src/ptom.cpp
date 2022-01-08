@@ -6,8 +6,34 @@
 #include "ptom.h"
 #include "logger.h"
 
-/* 定义解密后的明文文件最大的大小，若明文文件过大，应该适当增加改值 */
-#define __MAX_MFILE_SIZE__ 102400 
+/* 定义解密后的明文文件初始大小和递增大小 */
+#define __MFILE_BLOCK_SIZE__		4*1024	//4K byte
+
+/*
+	参考文档：
+	https://ww2.mathworks.cn/help/matlab/matlab_prog/matlab-operators-and-special-characters.html?lang=en
+	https://ww2.mathworks.cn/help/matlab/ref/iskeyword.html
+*/
+
+#define TK_NONE						0x00
+#define TK_KEYWORD					0x01	//关键词
+#define TK_ARITHMETIC_OPERATORS		0x02	//算数运算符
+#define TK_RELATIONAL_OPERATORS		0x04	//关系运算符
+#define TK_LOGICAL_OPERATORS		0x08	//逻辑运算符
+#define TK_SPECIAL_CHARACTERS		0x10	//特殊字符
+#define TK_USER_CHARACTERS			0x20	//用户自定义字符
+#define TK_OTHER					0x40
+
+#define TK_CODE_HEAD				0x100	//标识代码块开头，例如function、if
+#define TK_CODE_END					0x200	//标志代码块结束，例如end
+#define TK_CODE_LINE				0x400	//标志代码块换行
+
+#define TK_KEYWORD_HEAD			(TK_KEYWORD | TK_CODE_HEAD)
+#define TK_KEYWORD_END			(TK_KEYWORD | TK_CODE_END)
+
+#define __CHECK_FLAG__(FLAG, MASK)  (FLAG & MASK)
+
+static const char g_indented_character[] = "    ";	//定义缩进所用的字符
 
 struct mfile_t
 {
@@ -32,6 +58,12 @@ struct slot_t
 {
 	char** name;	//slot name的指针列表
 	uint32_t size;
+};
+
+struct token_t
+{
+	char name[32];
+	int flag;	//1=keyword(关键字)(ex:function) 2=symbol(符号)(ex:->) 3=other(ex:negerr)(到目前为止未见过到，需要报错)
 };
 
 typedef int (*uncompress)(uint8_t*, uint32_t*, uint8_t*, uint64_t);
@@ -70,144 +102,147 @@ static const uint32_t g_scrambling_tbl[256] = {
 	0x5F479711,0xFE96A437,0xED725175,0x949B0B4A,0x7C3CF03F,0x5EDE8F8A,0x7554BD67,0xF308E277,
 	0xBEA15540,0x0AFC8314,0xEE2FCDAF,0x04C7C5FB,0x633405A0,0x22209993,0x834F272B,0x33088577,
 };
-static const char g_token[134][25] = {
-	 "",
-	 "function",
-	 "function",
-	 "if",
-	 "switch",
-	 "try",
-	 "while",
-	 "for",
-	 "end",
-	 "else",
-	 "elseif",
-	 "break",
-	 "return",
-	 "parfor",
-	 "",
-	 "global",
-	 "persistent",
-	 "",
-	 "",
-	 "",
-	 "catch",
-	 "continue",
-	 "case",
-	 "otherwise",
-	 "",
-	 "classdef",
-	 "",
-	 "",
-	 "properties",
-	 "",
-	 "methods",
-	 "events",
-	 "enumeration",
-	 "spmd",
-	 "parsection",
-	 "section",
-	 "",
-	 "",
-	 "",
-	 "",
-	 "id",
-	 "end",
-	 "int",
-	 "float",
-	 "string",
-	 "dual",
-	 "bang",
-	 "?",
-	 "",
-	 "",
-	 ";",
-	",",
-	 "(",
-	 ")",
-	 "[",
-	 "]",
-	 "{",
-	 "}",
-	 "feend",
-	 "",
-	 "'",
-	 "dottrans",
-	 "~",
-	 "@",
-	 "$",
-	 "`",
-	 "\"",
-	 "",
-	 "",
-	 "",
-	 "+",
-	 "-",
-	 "*",
-	 "/",
-	 "\\",
-	 "^",
-	 ":",
-	 "",
-	 "",
-	 "",
-	 ".",
-	 ".*",
-	 "./",
-	 ".\\",
-	 ".^",
-	 "&",
-	 "|",
-	 "&&",
-	 "||",
-	 "<",
-	 ">",
-	 "<=",
-	 ">=",
-	 "==",
-	 "~=",
-	 "=",
-	 "cne",
-	 "arrow",
-	 "",
-	 "",
-	 "\n",
-	 "\n",
-	 "\n",
-	 "...\n   ",
-	 "",
-	 "comment",
-	 "blkstart",
-	 "blkcom",
-	 "blkend",
-	 "cpad",
-	 "pragma",
-	 "...",
-	 "..",
-	 "deep_nest",
-	 "deep_stmt",
-	 "",
-	 "white",
-	 "",
-	 "negerr",
-	 "semerr",
-	 "eolerr",
-	 "unterm",
-	 "badchar",
-	 "deep_paren",
-	 "fp_err",
-	 "res_err",
-	 "deep_com",
-	 "begin_type",
-	 "end_type",
-	 "string_literal",
-	 "unterm_string_literal",
-	 "arguments_block",
-	 "last_token",
-	 ""
+
+static const token_t g_token[134] = {
+	/*   name               flag    */
+		{"", 				TK_OTHER},					//0
+		{"function", 		TK_KEYWORD_HEAD},			//1
+		{"function", 		TK_KEYWORD_HEAD},			//2
+		{"if", 				TK_KEYWORD_HEAD},			//3
+		{"switch", 			TK_KEYWORD_HEAD},			//4
+		{"try", 			TK_KEYWORD_HEAD},			//5
+		{"while", 			TK_KEYWORD_HEAD},			//6
+		{"for", 			TK_KEYWORD_HEAD},			//7
+		{"end", 			TK_KEYWORD_END},			//8
+		{"else", 			TK_KEYWORD_HEAD},			//9
+		{"elseif", 			TK_KEYWORD_HEAD},			//10
+		{"break", 			TK_KEYWORD},				//11
+		{"return", 			TK_KEYWORD},				//12
+		{"parfor", 			TK_KEYWORD_HEAD},			//13
+		{"", 				TK_OTHER},					//14
+		{"global", 			TK_KEYWORD},				//15
+		{"persistent", 		TK_KEYWORD},				//16
+		{"", 				TK_OTHER},					//17
+		{"", 				TK_OTHER},					//18
+		{"", 				TK_OTHER},					//19
+		{"catch", 			TK_KEYWORD_HEAD},			//20
+		{"continue", 		TK_KEYWORD},				//21
+		{"case", 			TK_KEYWORD_HEAD},			//22
+		{"otherwise", 		TK_KEYWORD_HEAD},			//23
+		{"", 				TK_OTHER},					//24
+		{"classdef", 		TK_KEYWORD_HEAD},			//25
+		{"", 				TK_OTHER},					//26
+		{"", 				TK_OTHER},					//27
+		{"properties", 		TK_KEYWORD_HEAD},			//28
+		{"", 				TK_OTHER},					//29
+		{"methods", 		TK_KEYWORD_HEAD},			//30
+		{"events", 			TK_KEYWORD_HEAD},			//31
+		{"enumeration", 	TK_KEYWORD_HEAD},			//32
+		{"spmd", 			TK_KEYWORD_HEAD},			//33
+		{"parsection", 		TK_OTHER},					//34
+		{"section", 		TK_OTHER},					//35
+		{"", 				TK_OTHER},					//36
+		{"", 				TK_OTHER},					//37
+		{"", 				TK_OTHER},					//38
+		{"", 				TK_OTHER},					//39
+		{"id", 				TK_OTHER},					//40
+		{"end", 			TK_KEYWORD_END},			//41
+		{"int", 			TK_KEYWORD},				//42
+		{"float", 			TK_KEYWORD},				//43
+		{"string", 			TK_KEYWORD},				//44
+		{"dual", 			TK_KEYWORD},				//45
+		{"!", 				TK_SPECIAL_CHARACTERS},		//46
+		{"?", 				TK_SPECIAL_CHARACTERS},		//47
+		{"", 				TK_OTHER},					//48
+		{"", 				TK_OTHER},					//49
+		{";", 				TK_SPECIAL_CHARACTERS},		//50
+		{",", 				TK_SPECIAL_CHARACTERS},		//51
+		{"(", 				TK_SPECIAL_CHARACTERS},		//52
+		{")", 				TK_SPECIAL_CHARACTERS},		//53
+		{"[", 				TK_SPECIAL_CHARACTERS},		//54
+		{"]", 				TK_SPECIAL_CHARACTERS},		//55
+		{"{", 				TK_SPECIAL_CHARACTERS},		//56
+		{"}", 				TK_SPECIAL_CHARACTERS},		//57
+		{"feend", 			TK_OTHER},					//58
+		{"", 				TK_OTHER},					//59
+		{"'", 				TK_ARITHMETIC_OPERATORS},	//60
+		{".'", 				TK_ARITHMETIC_OPERATORS},	//61
+		{"~", 				TK_LOGICAL_OPERATORS},		//62
+		{"@", 				TK_SPECIAL_CHARACTERS},		//63
+		{"$", 				TK_OTHER},					//64
+		{"`", 				TK_OTHER},					//65
+		{"\"", 				TK_SPECIAL_CHARACTERS},		//66
+		{"", 				TK_OTHER},					//67
+		{"", 				TK_OTHER},					//68
+		{"", 				TK_OTHER},					//69
+		{"+", 				TK_ARITHMETIC_OPERATORS},	//70
+		{"-", 				TK_ARITHMETIC_OPERATORS},	//71
+		{"*", 				TK_ARITHMETIC_OPERATORS},	//72
+		{"/", 				TK_ARITHMETIC_OPERATORS},	//73
+		{"\\", 				TK_ARITHMETIC_OPERATORS},	//74
+		{"^", 				TK_ARITHMETIC_OPERATORS},	//75
+		{":", 				TK_SPECIAL_CHARACTERS},		//76
+		{"", 				TK_OTHER},					//77
+		{"", 				TK_OTHER},					//78
+		{"", 				TK_OTHER},					//79
+		{".", 				TK_SPECIAL_CHARACTERS},		//80
+		{".*", 				TK_ARITHMETIC_OPERATORS},	//81
+		{"./", 				TK_ARITHMETIC_OPERATORS},	//82
+		{".\\", 			TK_ARITHMETIC_OPERATORS},	//83
+		{".^", 				TK_ARITHMETIC_OPERATORS},	//84
+		{"&", 				TK_LOGICAL_OPERATORS},		//85
+		{"|", 				TK_LOGICAL_OPERATORS},		//86
+		{"&&", 				TK_LOGICAL_OPERATORS},		//87
+		{"||", 				TK_LOGICAL_OPERATORS},		//88
+		{"<", 				TK_RELATIONAL_OPERATORS},	//89
+		{">", 				TK_RELATIONAL_OPERATORS},	//90
+		{"<=", 				TK_RELATIONAL_OPERATORS},	//91
+		{">=", 				TK_RELATIONAL_OPERATORS},	//92
+		{"==", 				TK_RELATIONAL_OPERATORS},	//93
+		{"~=", 				TK_RELATIONAL_OPERATORS},	//94
+		{"=", 				TK_SPECIAL_CHARACTERS},		//95
+		{"cne", 			TK_OTHER},					//96
+		{"arrow", 			TK_OTHER},					//97
+		{"", 				TK_OTHER},					//98
+		{"", 				TK_OTHER},					//99
+		{"\n", 				TK_CODE_LINE},				//100
+		{"\n", 				TK_CODE_LINE},				//101
+		{"\n", 				TK_CODE_LINE},				//102
+		{"...\n", 			TK_CODE_LINE},				//103
+		{"", 				TK_OTHER},					//104
+		{"comment", 		TK_OTHER},					//105
+		{"blkstart", 		TK_OTHER},					//106
+		{"blkcom", 			TK_OTHER},					//107
+		{"blkend", 			TK_OTHER},					//108
+		{"cpad", 			TK_OTHER},					//109
+		{"pragma", 			TK_OTHER},					//110
+		{"...", 			TK_OTHER},					//111
+		{"..", 				TK_OTHER},					//112
+		{"deep_nest", 		TK_OTHER},					//113
+		{"deep_stmt", 		TK_OTHER},					//114
+		{"", 				TK_OTHER},					//115
+		{"white", 			TK_OTHER},					//116
+		{"", 				TK_OTHER},					//117
+		{"negerr", 			TK_OTHER},					//118
+		{"semerr", 			TK_OTHER},					//119
+		{"eolerr", 			TK_OTHER},					//120
+		{"unterm", 			TK_OTHER},					//121
+		{"badchar", 		TK_OTHER},					//122
+		{"deep_paren", 		TK_OTHER},					//123
+		{"fp_err", 			TK_OTHER},					//124
+		{"res_err", 		TK_OTHER},					//125
+		{"deep_com", 		TK_OTHER},					//126
+		{"begin_type", 		TK_OTHER},					//127
+		{"end_type", 		TK_OTHER},					//128
+		{"string_literal", 	TK_OTHER},					//129
+		{"unterm_string_literal", 		TK_OTHER},		//130
+		{"arguments_block", TK_OTHER},					//131
+		{"last_token", 		TK_OTHER},					//132
+		{"", 				TK_OTHER },					//132
 };
 
-static const char g_major_version[] = "v01.00";
+static const char g_major_version_0[] = "v00.00";
+static const char g_major_version_1[] = "v01.00";
 static const char g_minor_version[] = "v00.00";
 static HMODULE g_dll_handle;
 static uncompress g_uncompress_func;
@@ -310,9 +345,30 @@ static uint32_t my_ntohl(uint32_t in)
 	return out;
 }
 
+static int check_strcpy(char** ptr, char** cur, int* size, int* rsize, int dst_size)
+{
+	int offset;
+
+	if (*rsize <= dst_size)
+	{
+		*size += __MFILE_BLOCK_SIZE__;
+		offset = *cur - *ptr;
+		*cur = (char*)realloc(*ptr, *size);
+		if (*cur == nullptr)
+		{
+			__LOG_ERROR__("check_strcpy", "realloc failed\n");
+			return 0;
+		}
+		*ptr = *cur;
+		*cur += offset;
+		*rsize += __MFILE_BLOCK_SIZE__;
+	}
+	return 1;
+}
+
 static int check_pfile(struct pfile_t* pfile)
 {
-	if (memcmp(pfile->major, g_major_version, strlen(g_major_version)) == 0)
+	if (memcmp(pfile->major, g_major_version_0, strlen(g_major_version_0)) == 0 || memcmp(pfile->major, g_major_version_1, strlen(g_major_version_1)) == 0)
 	{
 		if (memcmp(pfile->minor, g_minor_version, strlen(g_minor_version)) == 0)
 		{
@@ -358,6 +414,14 @@ static int uncompress_pfile(struct mfile_t* mfile, struct pfile_t* pfile)
 
 	if (size != pfile->size_before_compress)
 	{
+		__LOG_ERROR__("uncompress_pfile", "uncompress failed\n");
+		free(tmp_ptr);
+		return 0;
+	}
+
+	if (size <= (7 * sizeof(uint32_t)))
+	{
+		__LOG_ERROR__("uncompress_pfile", "mfile too small, size = %d\n", size);
 		free(tmp_ptr);
 		return 0;
 	}
@@ -387,43 +451,69 @@ static int parse_pfile(struct pfile_t* pfile, char* path)
 
 	//pfp = fopen(path, "rb");
 	fopen_s(&pfp, path, "rb");
-	if (pfp != nullptr)
+	if (pfp == nullptr)
 	{
-		psize = fsize(pfp);
-		if (psize >= 32)
+		__LOG_ERROR__("parse_pfile", "open pfile failed, path=%s\n", path);
+		return 0;
+	}
+
+	psize = fsize(pfp);
+	if (psize >= 32)
+	{
+		fread(pfile, 1, 32, pfp);
+		if (check_pfile(pfile) == 1)
 		{
-			fread(pfile, 1, 32, pfp);
-			if (check_pfile(pfile))
+			pfile->pdata = (uint8_t*)malloc(pfile->size_after_compress);
+			if (pfile->pdata != nullptr)
 			{
-				pfile->pdata = (uint8_t*)malloc(pfile->size_after_compress);
-				if (pfile->pdata)
+				if (pfile->size_after_compress == fread(pfile->pdata, 1, pfile->size_after_compress, pfp))
 				{
-					if (pfile->size_after_compress == fread(pfile->pdata, 1, pfile->size_after_compress, pfp))
-					{
-						fclose(pfp);
-						return 1;
-					}
-					else
-					{
-						free(pfile->pdata);
-					}
+					fclose(pfp);
+					return 1;
+				}
+				else
+				{
+					free(pfile->pdata);
+					pfile->pdata = nullptr;
+					__LOG_ERROR__("parse_pfile", "pfile size not enough\n");
+					goto _label_parse_pfile_error_;
 				}
 			}
-			memset(pfile, 0, sizeof(struct pfile_t));
+			else
+			{
+				__LOG_ERROR__("parse_pfile", "malloc failed\n");
+				goto _label_parse_pfile_error_;
+			}
 		}
+		else
+		{
+			__LOG_ERROR__("parse_pfile", "file is not pfile, path=%s\n", path);
+			goto _label_parse_pfile_error_;
+		}
+	}
+	else
+	{
+		__LOG_ERROR__("parse_pfile", "pfile size too small, size=%d path=%s\n", psize, path);
+		goto _label_parse_pfile_error_;
+	}
+_label_parse_pfile_error_:
+	if (pfp != nullptr)
+	{
 		fclose(pfp);
 	}
+	memset(pfile, 0, sizeof(struct pfile_t));
 	return 0;
 }
 
 static int parse_mfile(char* mpath, struct mfile_t* mfile)
 {
-	int i, j, k, success, res_id, mfile_rsize;
+	int i, j, k, success, res_id, mfile_rsize, mfile_size, mfile_offset;
 	struct slot_t* slot[1] = { nullptr };
 	char* name_ptr = nullptr;
 	char* mfile_ptr = nullptr, * mfile_tmp = nullptr;
 	uint8_t* cur_ptr = nullptr;
 	uint8_t* end_ptr = nullptr;
+	int prev_flag = 0, indented = 0;
 
 	check_mfile(mfile);
 
@@ -447,30 +537,66 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 	/* parse code */
 	cur_ptr = (uint8_t*)name_ptr;
 	end_ptr = mfile->mdata + mfile->size;
-	mfile_tmp = mfile_ptr = (char*)malloc(__MAX_MFILE_SIZE__);
-	mfile_rsize = __MAX_MFILE_SIZE__;
+	mfile_size = __MFILE_BLOCK_SIZE__;
+	mfile_tmp = mfile_ptr = (char*)malloc(mfile_size);
+	mfile_rsize = __MFILE_BLOCK_SIZE__;
 	if (mfile_ptr == nullptr)
 	{
-		slot_free(slot[0]);
+		__LOG_ERROR__("parse_mfile", "malloc failed\n")
+			slot_free(slot[0]);
 		return 0;
 	}
+	memset(mfile_ptr, 0, __MFILE_BLOCK_SIZE__);
 
-	success = 1;
+	success = 0;
 	while (1)
 	{
 		if (cur_ptr >= end_ptr)
 			break;
-
+	
+		success = 1;
 		/* parse 2 byte code */
 		if ((cur_ptr[0] & 0x80) == 0x80)
 		{
 			res_id = 128 + 256 * ((cur_ptr[0] & 0x7F) - 1) + cur_ptr[1];
 			name_ptr = slot_get(slot[0], res_id);
 
-			/* 每个用户定义的符号前面加一个空格 */
-			mfile_tmp[0] = ' ';
-			mfile_tmp++;
-			mfile_rsize--;
+			if (__CHECK_FLAG__(prev_flag, TK_KEYWORD))
+			{
+				/* 如果用户自定义的符号之前是matlab关键字则加上一个空格 */
+				if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, 2) == 0)
+				{
+					success = 0;
+					break;
+				}
+				mfile_tmp[0] = ' ';
+				mfile_tmp++;
+				mfile_rsize--;
+			}else if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE))
+			{
+				/* 换行时添加缩进 */
+				if (indented > 0)
+				{
+					if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, indented * strlen(g_indented_character) + 1) == 0)
+					{
+						success = 0;
+						break;
+					}
+					for (i = 0; i < indented; i++)
+					{
+						strcpy_s(mfile_tmp, mfile_rsize, g_indented_character);
+						mfile_tmp += strlen(g_indented_character);
+						mfile_rsize -= strlen(g_indented_character);
+					}
+				}
+			}
+			prev_flag = TK_USER_CHARACTERS;
+
+			if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, strlen(name_ptr) + 1) == 0)
+			{
+				success = 0;
+				break;
+			}
 			strcpy_s(mfile_tmp, mfile_rsize, name_ptr);
 			mfile_tmp += strlen(name_ptr);
 			mfile_rsize -= strlen(name_ptr);
@@ -481,13 +607,53 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 		/* parse 1 byte code */
 		if (cur_ptr[0] < 134)
 		{
-			name_ptr = (char*)g_token[cur_ptr[0]];
+			name_ptr = (char*)g_token[cur_ptr[0]].name;
 
-			if (strlen(name_ptr) != 0)
+			if (strlen(name_ptr) == 0 || __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_OTHER))
 			{
+				__LOG_ERROR__("parse_mfile", "parse 1 byte code failed, opcode=%d(0x%02X)\n", cur_ptr[0], cur_ptr[0]);
+				success = 0;
+				break;
+			}
+			else
+			{	
+				if (__CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_END) && indented > 0)
+				{
+					indented--;
+				}
+
+				if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE) == 0)
+				{
+					/* 换行时添加缩进 */
+					if (indented > 0)
+					{
+						if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, indented * strlen(g_indented_character) + 1) == 0)
+						{
+							success = 0;
+							break;
+						}
+						for (i = 0; i < indented; i++)
+						{
+							strcpy_s(mfile_tmp, mfile_rsize, g_indented_character);
+							mfile_tmp += strlen(g_indented_character);
+							mfile_rsize -= strlen(g_indented_character);
+						}
+					}
+				}
+				if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, strlen(name_ptr) + 1) == 0)
+				{
+					success = 0;
+					break;
+				}
 				strcpy_s(mfile_tmp, mfile_rsize, name_ptr);
 				mfile_tmp += strlen(name_ptr);
 				mfile_rsize -= strlen(name_ptr);
+				prev_flag = g_token[cur_ptr[0]].flag;
+
+				if (__CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_HEAD))
+				{
+					indented++;
+				}
 			}
 			cur_ptr += 1;
 			continue;
@@ -510,9 +676,14 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 			fwrite(mfile_ptr, 1, strlen(mfile_ptr), fp);
 			fclose(fp);
 		}
+		else
+		{
+			__LOG_ERROR__("parse_mfile", "write mfile failed\n");
+		}
 	}
 
-	free(mfile_ptr);
+	if(mfile_ptr != NULL)
+		free(mfile_ptr);
 	slot_free(slot[0]);
 	return success;
 }
@@ -526,13 +697,17 @@ int ptom_init()
 {
 	g_dll_handle = LoadLibraryA("zlib1.dll");
 
-	if (!g_dll_handle)
+	if (g_dll_handle == nullptr)
+	{
+		__LOG_ERROR__("ptom_init", "load zlib failed\n");
 		return 0;
+	}	
 
 	g_uncompress_func = (uncompress)GetProcAddress(g_dll_handle, "uncompress");
 	if (!g_uncompress_func)
 	{
 		FreeLibrary(g_dll_handle);
+		g_dll_handle = nullptr;
 		return 0;
 	}
 	return 1;
@@ -540,8 +715,11 @@ int ptom_init()
 
 void ptom_deinit()
 {
-	if (g_dll_handle)
+	if (g_dll_handle != nullptr)
+	{
 		FreeLibrary(g_dll_handle);
+		g_dll_handle = nullptr;
+	}
 }
 
 int ptom_parse(char* mpath, char* ppath)
