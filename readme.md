@@ -2,9 +2,11 @@
 本项目用于解析由matlab使用pfile命令编译出来的(*.p)文件并将其转为文本文件(*.m)
 
 ## Usage
+```
 usage: ptom.exe [-i input_file] [-o output_file]
 -i: input file will be decrypted
 -o: output file will be decrypted
+```
 
 ## Contributing
 
