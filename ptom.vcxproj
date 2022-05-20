@@ -123,10 +123,16 @@
     <ClCompile Include="src\logger.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ptom.cpp" />
+    <ClCompile Include="src\pold_dec.cpp" />
+    <ClCompile Include="src\slot.cpp" />
+    <ClCompile Include="src\pstring.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\logger.h" />
     <ClInclude Include="include\ptom.h" />
+    <ClInclude Include="include\pold_dec.h" />
+    <ClInclude Include="include\slot.h" />
+    <ClInclude Include="include\pstring.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

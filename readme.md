@@ -20,5 +20,13 @@ usage: ptom.exe [-i input_file] [-o output_file]
 4. 1字节代码有些token也没有遇到过，所以如果解析到这些字节会失败
 5. 本项目优化了恢复后的*.m文件的文字排版，使之更加接近原生的*.m文件
 
-## Preview
-![image](https://github.com/ash255/ptom/blob/main/%E6%95%88%E6%9E%9C%E5%9B%BE.PNG)
+## version
+* v1.0 初始版本，实现基本的pcode解密，支持v00.00v00.00和v01.00v00.00
+* v1.1 优化代码结构，优化代码输出
+* v1.2 修复分支输出不整齐问题，支持旧版pcode解密，支持P-file  x.x解密（测试版）
+
+## 已知问题
+1. 旧版pcode的解析存在问题，过于复杂的代码解析可能有误。
+2. 旧版pcode的解析结果不够美观。
+3. 旧版pcode的switch处理未实现
+4. 旧版pcode部分代码缺少结束符end

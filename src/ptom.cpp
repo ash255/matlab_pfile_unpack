@@ -1,3 +1,4 @@
+/* 本文件解析新版pfile，适用于matlab 2007b(包含)之后使用pcode生成的pfile，pfile文件开头类似v00.00v00.00字样 */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -5,9 +6,10 @@
 #include <windows.h>
 #include "ptom.h"
 #include "logger.h"
+#include "slot.h"
 
 /* 定义解密后的明文文件初始大小和递增大小 */
-#define __MFILE_BLOCK_SIZE__		4*1024	//4K byte
+#define __MFILE_BLOCK_SIZE__		(4*1024)	//4K byte
 
 /*
 	参考文档：
@@ -30,8 +32,9 @@
 
 #define TK_KEYWORD_HEAD			(TK_KEYWORD | TK_CODE_HEAD)
 #define TK_KEYWORD_END			(TK_KEYWORD | TK_CODE_END)
+#define TK_KETWORD_BRANCH		(TK_KEYWORD_HEAD | TK_KEYWORD_END)	//既是函数开头又是函数结尾，如else、elseif
 
-#define __CHECK_FLAG__(FLAG, MASK)  (FLAG & MASK)
+#define __CHECK_FLAG__(FLAG, MASK)  (((FLAG) & (MASK))!=0)
 
 static const char g_indented_character[] = "    ";	//定义缩进所用的字符
 
@@ -52,12 +55,6 @@ struct pfile_t
 	uint32_t  size_after_compress;
 	uint32_t  size_before_compress;
 	uint8_t* pdata;
-};
-
-struct slot_t
-{
-	char** name;	//slot name的指针列表
-	uint32_t size;
 };
 
 struct token_t
@@ -114,8 +111,8 @@ static const token_t g_token[134] = {
 		{"while", 			TK_KEYWORD_HEAD},			//6
 		{"for", 			TK_KEYWORD_HEAD},			//7
 		{"end", 			TK_KEYWORD_END},			//8
-		{"else", 			TK_KEYWORD_HEAD},			//9
-		{"elseif", 			TK_KEYWORD_HEAD},			//10
+		{"else", 			TK_KETWORD_BRANCH},			//9
+		{"elseif", 			TK_KETWORD_BRANCH},			//10
 		{"break", 			TK_KEYWORD},				//11
 		{"return", 			TK_KEYWORD},				//12
 		{"parfor", 			TK_KEYWORD_HEAD},			//13
@@ -125,10 +122,10 @@ static const token_t g_token[134] = {
 		{"", 				TK_OTHER},					//17
 		{"", 				TK_OTHER},					//18
 		{"", 				TK_OTHER},					//19
-		{"catch", 			TK_KEYWORD_HEAD},			//20
+		{"catch", 			TK_KETWORD_BRANCH},			//20
 		{"continue", 		TK_KEYWORD},				//21
-		{"case", 			TK_KEYWORD_HEAD},			//22
-		{"otherwise", 		TK_KEYWORD_HEAD},			//23
+		{"case", 			TK_KETWORD_BRANCH},			//22
+		{"otherwise", 		TK_KETWORD_BRANCH},			//23
 		{"", 				TK_OTHER},					//24
 		{"classdef", 		TK_KEYWORD_HEAD},			//25
 		{"", 				TK_OTHER},					//26
@@ -146,7 +143,7 @@ static const token_t g_token[134] = {
 		{"", 				TK_OTHER},					//38
 		{"", 				TK_OTHER},					//39
 		{"id", 				TK_OTHER},					//40
-		{"end", 			TK_KEYWORD_END},			//41
+		{"end", 			TK_KEYWORD},				//41
 		{"int", 			TK_KEYWORD},				//42
 		{"float", 			TK_KEYWORD},				//43
 		{"string", 			TK_KEYWORD},				//44
@@ -246,62 +243,6 @@ static const char g_major_version_1[] = "v01.00";
 static const char g_minor_version[] = "v00.00";
 static HMODULE g_dll_handle;
 static uncompress g_uncompress_func;
-static float g_version = 1.1f;
-
-static struct slot_t* slot_init(uint32_t num)
-{
-	struct slot_t* slot_ptr = nullptr;
-	char** name_ptr = nullptr;
-
-	slot_ptr = (struct slot_t*)malloc(sizeof(struct slot_t));
-	if (slot_ptr == nullptr)
-		return nullptr;
-
-	memset(slot_ptr, 0, sizeof(struct slot_t));
-	slot_ptr->size = num;
-	if (num > 0)
-	{
-		name_ptr = (char**)malloc(num * sizeof(char*));
-		if (!name_ptr)
-		{
-			free(slot_ptr);
-			return nullptr;
-		}
-		slot_ptr->name = name_ptr;
-	}
-	return slot_ptr;
-}
-
-static int slot_set(struct slot_t* slot, uint32_t id, char* name)
-{
-	if (id < slot->size && slot->name != nullptr)
-	{
-		slot->name[id] = name;
-		return 1;
-	}
-	return 0;
-}
-
-static char* slot_get(struct slot_t* slot, uint32_t id)
-{
-	if (id < slot->size && slot->name != nullptr && slot->name[id] != nullptr)
-	{
-		return slot->name[id];
-	}
-	return nullptr;
-}
-
-static void slot_free(struct slot_t* slot)
-{
-	if (slot != nullptr)
-	{
-		if (slot->size > 0 && slot->name != nullptr)
-		{
-			free(slot->name);
-		}
-		free(slot);
-	}
-}
 
 static long fsize(FILE* fp)
 {
@@ -537,9 +478,9 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 	/* parse code */
 	cur_ptr = (uint8_t*)name_ptr;
 	end_ptr = mfile->mdata + mfile->size;
-	mfile_size = __MFILE_BLOCK_SIZE__;
+	mfile_size = __MFILE_BLOCK_SIZE__;	//缓冲区大小
 	mfile_tmp = mfile_ptr = (char*)malloc(mfile_size);
-	mfile_rsize = __MFILE_BLOCK_SIZE__;
+	mfile_rsize = __MFILE_BLOCK_SIZE__;	//未使用空间大小
 	if (mfile_ptr == nullptr)
 	{
 		__LOG_ERROR__("parse_mfile", "malloc failed\n")
@@ -553,7 +494,6 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 	{
 		if (cur_ptr >= end_ptr)
 			break;
-	
 		success = 1;
 		/* parse 2 byte code */
 		if ((cur_ptr[0] & 0x80) == 0x80)
@@ -572,12 +512,12 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 				mfile_tmp[0] = ' ';
 				mfile_tmp++;
 				mfile_rsize--;
-			}else if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE))
+			}else if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE))
 			{
 				/* 换行时添加缩进 */
 				if (indented > 0)
 				{
-					if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, indented * strlen(g_indented_character) + 1) == 0)
+					if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, indented * strlen(g_indented_character) + 1))
 					{
 						success = 0;
 						break;
@@ -622,7 +562,7 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 					indented--;
 				}
 
-				if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE) == 0)
+				if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE))
 				{
 					/* 换行时添加缩进 */
 					if (indented > 0)
@@ -682,15 +622,10 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 		}
 	}
 
-	if(mfile_ptr != NULL)
+	if(mfile_ptr != nullptr)
 		free(mfile_ptr);
 	slot_free(slot[0]);
 	return success;
-}
-
-float ptom_getVersion()
-{
-	return g_version;
 }
 
 int ptom_init()
@@ -748,4 +683,3 @@ int ptom_parse(char* mpath, char* ppath)
 	}
 	return 1;
 }
-
