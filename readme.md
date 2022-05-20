@@ -30,3 +30,4 @@ usage: ptom.exe [-i input_file] [-o output_file]
 2. 旧版pcode的解析结果不够美观。
 3. 旧版pcode的switch处理未实现
 4. 旧版pcode部分代码缺少结束符end
+5. 不支持嵌套解析

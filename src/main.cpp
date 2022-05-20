@@ -23,9 +23,15 @@ static int check_pfile_version(char *pfile)
 
 	fopen_s(&fp, pfile, "rb");
 	if (fp == nullptr)
+	{
+		__LOG_ERROR__("check_pfile_version","file %s can not open\n", pfile);
 		return 0;
+	}
 	if (fread(buffer, 1, 16, fp) != 16)
+	{
+		__LOG_ERROR__("check_pfile_version", "file %s read failed\n", pfile);
 		return 0;
+	}
 
 	//�°棺 v0x.00v0x.00
 	//�ɰ棺P-file  x.x

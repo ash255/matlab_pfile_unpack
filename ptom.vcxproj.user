@@ -14,7 +14,7 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>-i C:\Users\10345\Desktop\新建文件夹\work\if5.p -o C:\Users\10345\Desktop\新建文件夹\test.m2</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>-i C:\Users\10345\Desktop\新建文件夹\calculateC.p -o C:\Users\10345\Desktop\新建文件夹\test.m2</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerEnvironment>extern
 $(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
