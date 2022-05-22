@@ -43,6 +43,8 @@ static int check_pfile_version(char *pfile)
 	fclose(fp);
 	return ver;
 }
+
+#include "pstring.h"
 int main(int argc, char** argv)
 {
 	int i;
@@ -106,6 +108,6 @@ int main(int argc, char** argv)
 	}
 
 	ptom_deinit();
-	system("pause");
+	//system("pause");
 	return 1;
 }

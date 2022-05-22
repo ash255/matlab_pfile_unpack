@@ -25,6 +25,9 @@ usage: ptom.exe [-i input_file] [-o output_file]
 * v1.1 优化代码结构，优化代码输出
 * v1.2 修复分支输出不整齐问题，支持旧版pcode解密，支持P-file  x.x解密（测试版）
 
+## release
+https://github.com/ash255/matlab_pfile_unpack/releases/tag/v1.0
+
 ## 已知问题
 1. 旧版pcode的解析存在问题，过于复杂的代码解析可能有误。
 2. 旧版pcode的解析结果不够美观。
