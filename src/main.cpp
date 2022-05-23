@@ -48,7 +48,7 @@ static int check_pfile_version(char *pfile)
 int main(int argc, char** argv)
 {
 	int i;
-	char pfile[512], mfile[512];
+	char pfile[512] = { 0 }, mfile[512] = { 0 };
 
 	show_version();
 
@@ -79,6 +79,15 @@ int main(int argc, char** argv)
 			i++;
 			continue;
 		}
+	}
+
+	if (strlen(pfile) == 0 || strlen(mfile) == 0)
+	{
+		printf("usage: %s [-i input_file] [-o output_file]\n", argv[0]);
+		printf("-i: input file will be decrypted\n");
+		printf("-o: output file will be decrypted\n");
+		system("pause");
+		return 0;
 	}
 
 	if (ptom_init() == 0)

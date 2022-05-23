@@ -512,12 +512,12 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 				mfile_tmp[0] = ' ';
 				mfile_tmp++;
 				mfile_rsize--;
-			}else if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE))
+			}else if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && !__CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE))
 			{
 				/* 换行时添加缩进 */
 				if (indented > 0)
 				{
-					if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, indented * strlen(g_indented_character) + 1))
+					if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, indented * strlen(g_indented_character) + 1) == 0)
 					{
 						success = 0;
 						break;
@@ -562,7 +562,7 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 					indented--;
 				}
 
-				if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && __CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE))
+				if (__CHECK_FLAG__(prev_flag, TK_CODE_LINE) && !__CHECK_FLAG__(g_token[cur_ptr[0]].flag, TK_CODE_LINE))
 				{
 					/* 换行时添加缩进 */
 					if (indented > 0)
@@ -580,11 +580,13 @@ static int parse_mfile(char* mpath, struct mfile_t* mfile)
 						}
 					}
 				}
+
 				if (check_strcpy(&mfile_ptr, &mfile_tmp, &mfile_size, &mfile_rsize, strlen(name_ptr) + 1) == 0)
 				{
 					success = 0;
 					break;
 				}
+
 				strcpy_s(mfile_tmp, mfile_rsize, name_ptr);
 				mfile_tmp += strlen(name_ptr);
 				mfile_rsize -= strlen(name_ptr);
